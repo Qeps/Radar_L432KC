@@ -62,7 +62,7 @@
 #define configUSE_PREEMPTION                     1
 #define configSUPPORT_STATIC_ALLOCATION          1
 #define configSUPPORT_DYNAMIC_ALLOCATION         1
-#define configUSE_IDLE_HOOK                      0
+#define configUSE_IDLE_HOOK					     0
 #define configUSE_TICK_HOOK                      0
 #define configCPU_CLOCK_HZ                       ( SystemCoreClock )
 #define configTICK_RATE_HZ                       ((TickType_t)1000)
@@ -95,14 +95,6 @@
 
 /* The following flag must be enabled only when using newlib */
 #define configUSE_NEWLIB_REENTRANT          1
-
-/* CMSIS-RTOS V2 flags */
-#define configUSE_OS2_THREAD_SUSPEND_RESUME  1
-#define configUSE_OS2_THREAD_ENUMERATE       1
-#define configUSE_OS2_EVENTFLAGS_FROM_ISR    1
-#define configUSE_OS2_THREAD_FLAGS           1
-#define configUSE_OS2_TIMER                  1
-#define configUSE_OS2_MUTEX                  1
 
 /* Set the following definitions to 1 to include the API function, or zero
 to exclude the API function. */
