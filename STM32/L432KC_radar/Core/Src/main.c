@@ -30,7 +30,7 @@
 #include "task.h"
 #include <stdio.h>
 #include <string.h>
-
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,14 +51,14 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+volatile uint8_t adc_half_ready = 0;
+volatile uint8_t adc_full_ready = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static void task1_handler(void* parameters);
-static void task2_handler(void* parameters);
+static void task_motion_speed_handler(void* parameters);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -74,9 +74,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  TaskHandle_t task1_handle;
-  TaskHandle_t task2_handle;
-  BaseType_t   status;
+  TaskHandle_t motion_task_handle;
+  BaseType_t status;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -106,13 +105,8 @@ int main(void)
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
   /* Tasks creation */
-  const char *msg1 = "Task 1\r\n";
-  const char *msg2 = "Task 2\r\n";
-  status = xTaskCreate(task1_handler, "UART1", 256, (void*)msg1, 1, &task1_handle);
+  status = xTaskCreate(task_motion_speed_handler,"MOTION",512,NULL,2,&motion_task_handle);
   configASSERT(status == pdPASS);
-  status = xTaskCreate(task2_handler, "UART2", 256, (void*)msg2, 1, &task2_handle);
-  configASSERT(status == pdPASS);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -171,23 +165,90 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-static void task1_handler(void* parameters){
-    const char *msg = (const char*)parameters;
-    while(1){
-        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(500));
+void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance == ADC1)
+    {
+        adc_half_ready = 1;
     }
 }
 
-
-static void task2_handler(void* parameters){
-    const char *msg = (const char*)parameters;
-    while(1){
-        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(500));
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance == ADC1)
+    {
+        adc_full_ready = 1;
     }
 }
 
+static void task_motion_speed_handler(void* parameters)
+{
+    const float fs = 1000.0f;
+    const float fc = 10.525e9f;
+    const float c  = 299792458.0f;
+
+    uint16_t* buf;
+    uint32_t N = ADC_BUF_LEN / 2;
+
+    while (1)
+    {
+        if (adc_half_ready)
+        {
+            adc_half_ready = 0;
+            buf = &adc_buf[0];
+        }
+        else if (adc_full_ready)
+        {
+            adc_full_ready = 0;
+            buf = &adc_buf[N];
+        }
+        else
+        {
+            vTaskDelay(1);
+            continue;
+        }
+
+        // --- DC removal ---
+        float mean = 0.0f;
+        for (uint32_t i = 0; i < N; i++)
+            mean += buf[i];
+        mean /= N;
+
+        // --- RMS (detekcja ruchu) ---
+        float rms = 0.0f;
+        for (uint32_t i = 0; i < N; i++)
+        {
+            float x = buf[i] - mean;
+            rms += x * x;
+        }
+        rms = sqrtf(rms / N);
+
+        uint8_t motion = (rms > 20.0f);  // próg do dostrojenia - wymaga testów + warto podejrzeć oscyloskop
+
+        float speed = 0.0f;
+
+        if (motion)
+        {
+            // --- zero-crossing ---
+            uint32_t crossings = 0;
+            for (uint32_t i = 1; i < N; i++)
+            {
+                if ((buf[i-1] - mean) < 0 && (buf[i] - mean) >= 0)
+                    crossings++;
+            }
+
+            float fd = (crossings * fs) / (float)N;
+            speed = (c * fd) / (2.0f * fc);
+        }
+
+        // --- debug UART ---
+        char msg[64];
+        snprintf(msg, sizeof(msg),
+                 "motion=%d speed=%.2f m/s\r\n",
+                 motion, speed);
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
+}
 /* USER CODE END 4 */
 
 /**
