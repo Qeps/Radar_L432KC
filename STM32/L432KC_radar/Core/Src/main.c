@@ -40,7 +40,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define ADC_BUF_LEN 256
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -63,7 +63,7 @@ static void task2_handler(void* parameters);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint16_t adc_buf[10];
+static uint16_t adc_buf[ADC_BUF_LEN];
 /* USER CODE END 0 */
 
 /**
@@ -103,7 +103,7 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim1);
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, 10);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
   /* Tasks creation */
   const char *msg1 = "Task 1\r\n";
