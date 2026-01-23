@@ -41,6 +41,23 @@ typedef struct {
     uint8_t motion;
     float speed;
 } motion_result_t;
+
+typedef enum {
+    MSG_RESULT,
+    MSG_DEADLINE
+} uart_msg_type_t;
+
+typedef struct {
+    uart_msg_type_t type;
+    union {
+        motion_result_t result;
+        struct {
+            uint32_t miss_cnt;
+            uint32_t exec_ms;
+        } deadline;
+    } u;
+} uart_msg_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -108,7 +125,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim1);
   /* Queue creation */
-  uart_queue = xQueueCreate(4, sizeof(motion_result_t));
+  uart_queue = xQueueCreate(4, sizeof(uart_msg_t));
   configASSERT(uart_queue != NULL);
   /* Tasks creation */
   status = xTaskCreate(task_motion_speed_handler, "MOTION", 512, NULL, 2, &motion_task_handle);
@@ -196,7 +213,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 static void task_motion_speed_handler(void* parameters)
 {
 	TickType_t last_wake = xTaskGetTickCount();
-	const TickType_t period = pdMS_TO_TICKS(10);   // 10 ms - w zależności od potrzeb ustaw
+	const TickType_t period = pdMS_TO_TICKS(150);   // 10 ms - w zależności od potrzeb ustaw
 
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
@@ -205,6 +222,7 @@ static void task_motion_speed_handler(void* parameters)
     const float c  = 299792458.0f;
 
     static uint32_t deadline_miss_cnt = 0;
+    static TickType_t last_deadline_report = 0;
     uint16_t* buf;
     uint32_t N = ADC_BUF_LEN / 2;
     uint32_t notify;
@@ -266,27 +284,44 @@ static void task_motion_speed_handler(void* parameters)
         r.amp_pp = amp_pp;
         r.motion = motion;
         r.speed  = speed;
-        xQueueSend(uart_queue, &r, 0);
+        uart_msg_t m;
+        m.type = MSG_RESULT;
+        m.u.result = r;
+        xQueueSend(uart_queue, &m, 0);
 
         TickType_t t1 = xTaskGetTickCount();
-		if ((t1 - t0) > period) {
-			deadline_miss_cnt++;
-		}
+        if ((t1 - t0) > period) {
+            deadline_miss_cnt++;
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_deadline_report) >= pdMS_TO_TICKS(1000)) {
+                last_deadline_report = now;
+                uart_msg_t d;
+                d.type = MSG_DEADLINE;
+                d.u.deadline.miss_cnt = deadline_miss_cnt;
+                d.u.deadline.exec_ms = (uint32_t)((t1 - t0) * portTICK_PERIOD_MS);
+                xQueueSend(uart_queue, &d, 0);
+            }
+        }
         vTaskDelayUntil(&last_wake, period);
     }
 }
 
 static void task_uart(void* parameters)
 {
-    motion_result_t r;
-    char msg[80];
+    uart_msg_t m;
+    char msg[96];
 
     while (1) {
-        xQueueReceive(uart_queue, &r, portMAX_DELAY);
-        snprintf(msg, sizeof(msg), "amp_pp=%.1f motion=%d speed=%.2f m/s\r\n", r.amp_pp, r.motion, r.speed);
+        xQueueReceive(uart_queue, &m, portMAX_DELAY);
+        if (m.type == MSG_RESULT) {
+            snprintf(msg, sizeof(msg), "amp_pp=%.1f motion=%d speed=%.2f m/s\r\n", m.u.result.amp_pp, m.u.result.motion, m.u.result.speed);
+        } else {
+            snprintf(msg, sizeof(msg), "DEADLINE MISS: cnt=%lu exec=%lu ms\r\n", m.u.deadline.miss_cnt, m.u.deadline.exec_ms);
+        }
         HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
     }
 }
+
 
 
 /* USER CODE END 4 */
