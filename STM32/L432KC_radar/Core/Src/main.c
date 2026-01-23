@@ -208,32 +208,38 @@ static void task_motion_speed_handler(void* parameters)
             continue;
         }
 
-        // --- DC removal ---
+        //DC removal
         float mean = 0.0f;
         for (uint32_t i = 0; i < N; i++)
             mean += buf[i];
         mean /= N;
 
-        // --- RMS (detekcja ruchu) ---
-        float rms = 0.0f;
+        //peak-to-peak amplituda
+        float minv =  1e9f;
+        float maxv = -1e9f;
+
         for (uint32_t i = 0; i < N; i++)
         {
             float x = buf[i] - mean;
-            rms += x * x;
+            if (x < minv) minv = x;
+            if (x > maxv) maxv = x;
         }
-        rms = sqrtf(rms / N);
 
-        uint8_t motion = (rms > 20.0f);  // próg do dostrojenia - wymaga testów + warto podejrzeć oscyloskop
+        float amp_pp = maxv - minv;
+
+        //detekcja ruchu
+        uint8_t motion = (amp_pp > 300.0f);
 
         float speed = 0.0f;
 
         if (motion)
         {
-            // --- zero-crossing ---
             uint32_t crossings = 0;
             for (uint32_t i = 1; i < N; i++)
             {
-                if ((buf[i-1] - mean) < 0 && (buf[i] - mean) >= 0)
+                float x0 = buf[i-1] - mean;
+                float x1 = buf[i]   - mean;
+                if (x0 < 0.0f && x1 >= 0.0f)
                     crossings++;
             }
 
@@ -241,14 +247,13 @@ static void task_motion_speed_handler(void* parameters)
             speed = (c * fd) / (2.0f * fc);
         }
 
-        // --- debug UART ---
-        char msg[64];
-        snprintf(msg, sizeof(msg),
-                 "motion=%d speed=%.2f m/s\r\n",
-                 motion, speed);
+        char msg[80];
+        snprintf(msg, sizeof(msg), "amp_pp=%.1f motion=%d speed=%.2f m/s\r\n", amp_pp, motion, speed);
         HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
     }
 }
+
+
 /* USER CODE END 4 */
 
 /**
