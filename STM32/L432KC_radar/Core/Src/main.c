@@ -213,7 +213,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 static void task_motion_speed_handler(void* parameters)
 {
 	TickType_t last_wake = xTaskGetTickCount();
-	const TickType_t period = pdMS_TO_TICKS(150);   // 10 ms - w zależności od potrzeb ustaw
+	const TickType_t period = pdMS_TO_TICKS(150);   // x ms - w zależności od potrzeb ustaw
 
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
