@@ -53,6 +53,7 @@
 /* USER CODE BEGIN PV */
 volatile uint8_t adc_half_ready = 0;
 volatile uint8_t adc_full_ready = 0;
+static TaskHandle_t motion_task_handle = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,7 +75,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  TaskHandle_t motion_task_handle;
   BaseType_t status;
   /* USER CODE END 1 */
 
@@ -105,7 +105,7 @@ int main(void)
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
   /* Tasks creation */
-  status = xTaskCreate(task_motion_speed_handler,"MOTION",512,NULL,2,&motion_task_handle);
+  status = xTaskCreate(task_motion_speed_handler, "MOTION", 512, NULL, 2, &motion_task_handle);
   configASSERT(status == pdPASS);
   /* USER CODE END 2 */
 
@@ -167,17 +167,21 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
 {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     if (hadc->Instance == ADC1)
     {
-        adc_half_ready = 1;
+        xTaskNotifyFromISR(motion_task_handle, 0x01, eSetBits, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     if (hadc->Instance == ADC1)
     {
-        adc_full_ready = 1;
+        xTaskNotifyFromISR(motion_task_handle, 0x02, eSetBits, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
 
@@ -189,23 +193,19 @@ static void task_motion_speed_handler(void* parameters)
 
     uint16_t* buf;
     uint32_t N = ADC_BUF_LEN / 2;
+    uint32_t notify;
 
     while (1)
     {
-        if (adc_half_ready)
-        {
-            adc_half_ready = 0;
-            buf = &adc_buf[0];
+        xTaskNotifyWait(0, 0xFFFFFFFF, &notify, portMAX_DELAY);
+        if (notify & 0x01){
+          buf = &adc_buf[0];
         }
-        else if (adc_full_ready)
-        {
-            adc_full_ready = 0;
-            buf = &adc_buf[N];
+        else if (notify & 0x02){
+          buf = &adc_buf[N];
         }
-        else
-        {
-            vTaskDelay(1);
-            continue;
+        else{
+          continue;
         }
 
         //DC removal
