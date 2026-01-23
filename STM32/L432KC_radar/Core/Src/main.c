@@ -195,18 +195,23 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 
 static void task_motion_speed_handler(void* parameters)
 {
+	TickType_t last_wake = xTaskGetTickCount();
+	const TickType_t period = pdMS_TO_TICKS(10);   // 10 ms - w zależności od potrzeb ustaw
+
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
     const float fs = 1000.0f;
     const float fc = 10.525e9f;
     const float c  = 299792458.0f;
 
+    static uint32_t deadline_miss_cnt = 0;
     uint16_t* buf;
     uint32_t N = ADC_BUF_LEN / 2;
     uint32_t notify;
 
     while (1)
     {
+    	TickType_t t0 = xTaskGetTickCount();
         xTaskNotifyWait(0, 0xFFFFFFFF, &notify, portMAX_DELAY);
         if (notify & 0x01){
           buf = &adc_buf[0];
@@ -262,7 +267,12 @@ static void task_motion_speed_handler(void* parameters)
         r.motion = motion;
         r.speed  = speed;
         xQueueSend(uart_queue, &r, 0);
-        vTaskDelay(1);
+
+        TickType_t t1 = xTaskGetTickCount();
+		if ((t1 - t0) > period) {
+			deadline_miss_cnt++;
+		}
+        vTaskDelayUntil(&last_wake, period);
     }
 }
 
