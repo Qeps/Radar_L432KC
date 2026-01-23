@@ -28,6 +28,7 @@
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
 #include "task.h"
+#include "queue.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -35,7 +36,11 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct {
+    float amp_pp;
+    uint8_t motion;
+    float speed;
+} motion_result_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -51,15 +56,15 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-volatile uint8_t adc_half_ready = 0;
-volatile uint8_t adc_full_ready = 0;
 static TaskHandle_t motion_task_handle = NULL;
+static QueueHandle_t uart_queue;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void task_motion_speed_handler(void* parameters);
+static void task_uart(void* parameters);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -102,10 +107,13 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim1);
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
-
+  /* Queue creation */
+  uart_queue = xQueueCreate(4, sizeof(motion_result_t));
+  configASSERT(uart_queue != NULL);
   /* Tasks creation */
   status = xTaskCreate(task_motion_speed_handler, "MOTION", 512, NULL, 2, &motion_task_handle);
+  configASSERT(status == pdPASS);
+  status = xTaskCreate(task_uart, "UART", 256, NULL, 1, NULL);
   configASSERT(status == pdPASS);
   /* USER CODE END 2 */
 
@@ -187,6 +195,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 
 static void task_motion_speed_handler(void* parameters)
 {
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
+
     const float fs = 1000.0f;
     const float fc = 10.525e9f;
     const float c  = 299792458.0f;
@@ -247,8 +257,23 @@ static void task_motion_speed_handler(void* parameters)
             speed = (c * fd) / (2.0f * fc);
         }
 
-        char msg[80];
-        snprintf(msg, sizeof(msg), "amp_pp=%.1f motion=%d speed=%.2f m/s\r\n", amp_pp, motion, speed);
+        motion_result_t r;
+        r.amp_pp = amp_pp;
+        r.motion = motion;
+        r.speed  = speed;
+        xQueueSend(uart_queue, &r, 0);
+        vTaskDelay(1);
+    }
+}
+
+static void task_uart(void* parameters)
+{
+    motion_result_t r;
+    char msg[80];
+
+    while (1) {
+        xQueueReceive(uart_queue, &r, portMAX_DELAY);
+        snprintf(msg, sizeof(msg), "amp_pp=%.1f motion=%d speed=%.2f m/s\r\n", r.amp_pp, r.motion, r.speed);
         HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
     }
 }
