@@ -4,8 +4,8 @@
 
 This project implements a **real-time Doppler radar signal processing pipeline** on an **STM32L432KC** microcontroller using **FreeRTOS**.
 
-The system continuously acquires analog radar signals using **ADC with DMA**, processes them in a real-time task to detect motion and estimate speed, and outputs results asynchronously over **UART**.  
-Execution time and **deadline misses are explicitly monitored and reported**, making real-time behavior observable.
+The system continuously acquires analog radar signals using **ADC with DMA**, dispatches buffer-ready events in a lightweight real-time task, performs signal processing in a dedicated DSP task, and outputs results asynchronously over **UART**.  
+End-to-end latency and **deadline misses are explicitly monitored and reported**, making real-time behavior observable.
 
 The project focuses on **correct RTOS architecture**, deterministic behavior, and clear separation of responsibilities rather than raw signal-processing complexity.
 
@@ -15,8 +15,9 @@ The project focuses on **correct RTOS architecture**, deterministic behavior, an
 
 - ADC + DMA (circular buffer)
 - DMA ISR (half / full buffer)
-- Motion Processing Task
-- FreeRTOS Queue
+- Dispatch Task
+- DSP Processing Task
+- FreeRTOS Queues
 - UART Task
 - Serial Output
 
@@ -33,30 +34,41 @@ The project focuses on **correct RTOS architecture**, deterministic behavior, an
 
 ## FreeRTOS Tasks
 
-### Motion Processing Task
+### Dispatch Task
 
 - Triggered by ADC DMA half/full completion
+- Selects the active ADC buffer half
+- Submits DSP jobs via a queue
+- Acts as the timing reference
+- Does not perform signal processing
+
+### DSP Processing Task
+
+- Blocks on a DSP job queue
 - Processes one buffer half per activation
 - Performs motion detection and speed estimation
-- Runs periodically with a defined deadline
-- Detects and reports deadline misses
+- Reports results and deadline violations
 
 ### UART Task
 
 - Receives messages via a queue
 - Formats and sends output over UART
-- Isolated from real-time constraints
+- Fully isolated from real-time constraints
 
 ---
 
 ## Inter-Task Communication
 
-Tasks communicate using a **single FreeRTOS queue** with a tagged message structure:
+Tasks communicate using **two FreeRTOS queues**:
+
+- DSP queue for buffer pointers and timing metadata
+- UART queue for tagged output messages
 
 ```c
 typedef enum {
     MSG_RESULT,
-    MSG_DEADLINE
+    MSG_DEADLINE,
+    MSG_WARN
 } uart_msg_type_t;
 
 typedef struct {
@@ -67,10 +79,13 @@ typedef struct {
             uint32_t miss_cnt;
             uint32_t exec_ms;
         } deadline;
+        struct {
+            uint32_t code;
+        } warn;
     } u;
 } uart_msg_t;
 ```
-This approach allows multiple message types without multiple queues and keeps the UART task simple and extensible.
+This keeps the UART task simple and allows reporting results, deadline violations, and warnings without impacting real-time behavior.
 
 ---
 
@@ -85,13 +100,13 @@ The algorithm is intentionally simple and deterministic, prioritizing predictabl
 ---
 
 ## Timing and Real-Time Behavior
-- Processing task runs with a fixed period
-- Execution time is measured using RTOS ticks
+- Processing is triggered by ADC DMA events
+- End-to-end dispatch-to-DSP latency is measured using RTOS ticks
 - Deadline misses are detected and reported over UART
 Example output:
 ```bash
 amp_pp=689.0 motion=1 speed=0.89 m/s
-DEADLINE MISS: cnt=145 exec=128 ms
+DEADLINE MISS: cnt=145 latency=128 ms
 ```
 This makes timing behavior explicit and debuggable.
 

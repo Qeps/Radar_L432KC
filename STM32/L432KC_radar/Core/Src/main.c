@@ -234,13 +234,11 @@ static void task_dispatch(void* parameters)
 
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
 
-    const float fs = 1000.0f;              // Hz
-    const uint32_t N = ADC_BUF_LEN / 2;    // pół-bufor
-
-    // Deadline: czas od "bufor gotowy" do "wynik wysłany przez DSP".
-    // Przy fs=1000 i N=128 okno ma 128 ms; zwykle deadline ~= okno.
-    const TickType_t deadline_ticks = pdMS_TO_TICKS((uint32_t)((1000.0f * (float)N) / fs));
-
+    const float fs = 1000.0f;
+    const uint32_t N = ADC_BUF_LEN / 2;
+    // Czas okna danych lub sztywny próg
+    const TickType_t deadline_ticks = pdMS_TO_TICKS(10);
+    // const TickType_t deadline_ticks = pdMS_TO_TICKS((uint32_t)((1000.0f * (float)N) / fs));
     uint32_t notify = 0;
 
     while (1)
@@ -284,6 +282,9 @@ static void task_dsp(void* parameters)
         xQueueReceive(dsp_queue, &job, portMAX_DELAY);
 
         TickType_t t0 = xTaskGetTickCount();
+
+        // Fake delay - test DEADLINE MISS
+        //vTaskDelay(pdMS_TO_TICKS(15));
 
         uint16_t* buf = job.buf;
         uint32_t N = job.N;
@@ -332,7 +333,7 @@ static void task_dsp(void* parameters)
         m.u.result.speed  = speed;
         (void)xQueueSend(uart_queue, &m, 0);
 
-        // Deadline check: latencja od submit do "po obliczeniach"
+        // Deadline check
         TickType_t t1 = xTaskGetTickCount();
         TickType_t latency = t1 - job.t_submit;
 
@@ -345,8 +346,6 @@ static void task_dsp(void* parameters)
             d.u.deadline.exec_ms  = (uint32_t)(latency * portTICK_PERIOD_MS);
             (void)xQueueSend(uart_queue, &d, 0);
         }
-
-        // Dodatkowo możesz mierzyć czysty czas DSP: (t1 - t0)
         (void)t0;
     }
 }
